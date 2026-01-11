@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Audio + SRT Captions</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Arial; padding: 24px; }
+    .box { max-width: 720px; margin: 0 auto; }
+    #subtitle {
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: #f6f6f6;
+      font-size: 22px;
+      line-height: 1.4;
+      text-align: center;
+      min-height: 48px;
+      white-space: pre-wrap;
+    }
+    .hint { color:#666; font-size: 13px; margin-top: 10px; }
+    .err {
+      margin-top: 10px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: #fff3cd;
+      color: #664d03;
+      font-size: 13px;
+      line-height: 1.5;
+      display: none;
+      white-space: pre-wrap;
+    }
+    code { background:#f2f2f2; padding: 1px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <audio id="player" controls preload="metadata" style="width:100%"></audio>
+    <div id="subtitle"></div>
+    <div id="err" class="err"></div>
+    <div class="hint">
+      支持 URL 参数：<code>?audio=音频URL&srt=SRT的base64url</code>（无参数则播放默认示例）
+    </div>
+  </div>
+
+  <script>
+    // ====== 1) 从 URL 参数读取 audio / srt（没有则用默认 demo） ======
+    function getParam(name) {
+      return new URL(location.href).searchParams.get(name);
+    }
+
+    // base64url -> utf8
+    function b64urlToText(b64url) {
+      const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+      const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+      const bin = atob(b64 + pad);
+      const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+      return new TextDecoder("utf-8").decode(bytes);
+    }
+
+    const demoAudioUrl = "https://lf-bot-studio-plugin-resource.coze.cn/obj/bot-studio-platform-plugin-tos/artist/image/94021ffdc3b74531aa9add55b56db03a.wav";
+    const demoSrtText  = `1
+00:00:00,611 --> 00:00:06,308
+[intro]
+
+2
+00:00:10,451 --> 00:00:11,495
+[verse]
+
+3
+00:00:11,495 --> 00:00:15,290
+记忆是张小小的网
+
+4
+00:00:15,291 --> 00:00:18,970
+存着过去的模样
+
+5
+00:00:18,971 --> 00:00:25,530
+三个开关开启它的功能
+
+6
+00:00:25,531 --> 00:00:30,124
+分别叫做忘记存储和取用
+
+7
+00:00:30,124 --> 00:00:32,130
+[chorus]
+
+8
+00:00:32,131 --> 00:00:37,050
+猜字翻译让你不再迷茫
+
+9
+00:00:37,051 --> 00:00:42,108
+文字转换帮你轻松远航
+
+10
+00:00:42,691 --> 00:00:47,610
+记得牢固搭配实用
+
+11
+00:00:47,611 --> 00:00:53,210
+记忆助手聪明地把事情办
+
+12
+00:00:53,211 --> 00:00:57,490
+[verse]
+
+13
+00:00:57,491 --> 00:01:01,170
+记忆是张小小的网
+
+14
+00:01:01,171 --> 00:01:05,450
+存着过去的模样
+
+15
+00:01:05,451 --> 00:01:10,080
+三个开关开启它的功能
+
+16
+00:01:10,080 --> 00:01:14,708
+分别叫做忘记存储和取用
+
+17
+00:01:14,708 --> 00:01:15,610
+[chorus]
+
+18
+00:01:15,611 --> 00:01:20,570
+猜字翻译让你不再迷茫
+
+19
+00:01:20,571 --> 00:01:25,588
+文字转换帮你轻松远航
+
+20
+00:01:26,171 --> 00:01:31,090
+记得牢固搭配实用
+
+21
+00:01:31,091 --> 00:01:37,730
+记忆助手巧妙地把事情办
+
+22
+00:01:37,731 --> 00:01:52,348
+[outro]
+`;
+
+    const errEl = document.getElementById("err");
+
+    const audioParam = getParam("audio");
+    const srtParam   = getParam("srt");
+
+    let audioUrl = demoAudioUrl;
+    let srtText  = demoSrtText;
+
+    try {
+      if (audioParam) audioUrl = decodeURIComponent(audioParam);
+    } catch (e) {
+      errEl.style.display = "block";
+      errEl.textContent = "audio 参数解码失败：请确保 audio= 后面是 encodeURIComponent 的结果。\n将回退到默认示例音频。";
+      audioUrl = demoAudioUrl;
+    }
+
+    try {
+      if (srtParam) srtText = b64urlToText(srtParam);
+    } catch (e) {
+      errEl.style.display = "block";
+      errEl.textContent =
+        (errEl.textContent ? (errEl.textContent + "\n\n") : "") +
+        "srt 参数解码失败：请确保 srt= 后面是 SRT 文本的 base64url。\n将回退到默认示例字幕。";
+      srtText = demoSrtText;
+    }
+
+    // ====== 2) 装载音频 ======
+    const audio = document.getElementById("player");
+    const subtitleEl = document.getElementById("subtitle");
+    audio.src = audioUrl;
+
+    // ====== 3) SRT 解析 ======
+    function toSeconds(t) { // "HH:MM:SS,mmm"
+      const [hms, ms] = t.split(",");
+      const [h, m, s] = hms.split(":").map(Number);
+      return h * 3600 + m * 60 + s + (Number(ms) || 0) / 1000;
+    }
+
+    function parseSrt(srt) {
+      const blocks = srt.replace(/\r/g, "").trim().split("\n\n");
+      const cues = [];
+
+      for (const block of blocks) {
+        const lines = block.split("\n");
+        if (lines.length < 3) continue;
+
+        const timeLine = lines[1];
+        const m = timeLine.match(/(\d+:\d+:\d+,\d+)\s*-->\s*(\d+:\d+:\d+,\d+)/);
+        if (!m) continue;
+
+        const start = toSeconds(m[1]);
+        const end   = toSeconds(m[2]);
+        const text  = lines.slice(2).join("\n").trim();
+        if (!text) continue;
+
+        cues.push({ start, end, text });
+      }
+
+      cues.sort((a, b) => a.start - b.start);
+      return cues;
+    }
+
+    const cues = parseSrt(srtText);
+
+    // ====== 4) 同步渲染字幕 ======
+    let lastIndex = -1;
+
+    audio.addEventListener("timeupdate", () => {
+      const t = audio.currentTime;
+
+      // 若还在同一条字幕里，不用重复查找
+      if (lastIndex >= 0) {
+        const c = cues[lastIndex];
+        if (t >= c.start && t <= c.end) return;
+      }
+
+      // 查找当前应显示的字幕
+      let found = -1;
+      for (let i = 0; i < cues.length; i++) {
+        if (t >= cues[i].start && t <= cues[i].end) { found = i; break; }
+      }
+
+      if (found !== lastIndex) {
+        lastIndex = found;
+        subtitleEl.textContent = (found === -1) ? "" : cues[found].text;
+      }
+    });
+
+    audio.addEventListener("seeked", () => { lastIndex = -1; }); // 拖动进度条后强制重算
+    audio.addEventListener("ended", () => { subtitleEl.textContent = ""; });
+
+    // 额外：音频加载失败提示（常见是 URL 不可跨域/资源过期）
+    audio.addEventListener("error", () => {
+      errEl.style.display = "block";
+      errEl.textContent =
+        (errEl.textContent ? (errEl.textContent + "\n\n") : "") +
+        "音频加载失败：请检查 audio URL 是否可公开访问、是否支持浏览器播放（mp3/wav等），以及资源是否过期。";
+    });
+  </script>
+</body>
+</html>
