@@ -1,0 +1,118 @@
+<script>
+  function getParam(name) {
+    return new URL(location.href).searchParams.get(name);
+  }
+
+  function b64urlToText(b64url) {
+    const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+    const bin = atob(b64 + pad);
+    const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+
+  const demoAudioUrl = "https://lf-bot-studio-plugin-resource.coze.cn/obj/bot-studio-platform-plugin-tos/artist/image/94021ffdc3b74531aa9add55b56db03a.wav";
+  const demoSrtText = `1
+00:00:00,000 --> 00:00:02,000
+hello`;
+
+  const errEl = document.getElementById("err");
+  const audio = document.getElementById("player");
+  const subtitleEl = document.getElementById("subtitle");
+
+  // ✅ 你的 GitHub 用户名/仓库名（按你现在的项目）
+  const GITHUB_USER = "ge-1113";
+  const GITHUB_REPO = "knowledge_song";
+  const DATA_BASE = `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/data/`;
+
+  async function loadById(id) {
+    const url = `${DATA_BASE}${encodeURIComponent(id)}.json?ts=${Date.now()}`;
+    const resp = await fetch(url, { cache: "no-store" });
+    if (!resp.ok) throw new Error(`id 数据不存在或无法访问：${resp.status}`);
+    return await resp.json(); // { audioUrl, srtText }
+  }
+
+  async function init() {
+    const id = getParam("id");
+    const audioParam = getParam("audio");
+    const srtParam = getParam("srt");
+
+    let audioUrl = demoAudioUrl;
+    let srtText  = demoSrtText;
+
+    try {
+      if (id) {
+        const data = await loadById(id);
+        if (data.audioUrl) audioUrl = data.audioUrl;
+        if (data.srtText)  srtText  = data.srtText;
+      } else {
+        if (audioParam) audioUrl = decodeURIComponent(audioParam);
+        if (srtParam)   srtText  = b64urlToText(srtParam);
+      }
+    } catch (e) {
+      errEl.style.display = "block";
+      errEl.textContent = `加载失败：${e.message}\n将回退到默认示例。`;
+      audioUrl = demoAudioUrl;
+      srtText  = demoSrtText;
+    }
+
+    audio.src = audioUrl;
+
+    // ====== 下面保持你原来的 SRT parse + timeupdate 渲染即可 ======
+    function toSeconds(t) {
+      const [hms, ms] = t.split(",");
+      const [h, m, s] = hms.split(":").map(Number);
+      return h * 3600 + m * 60 + s + (Number(ms) || 0) / 1000;
+    }
+
+    function parseSrt(srt) {
+      const blocks = srt.replace(/\r/g, "").trim().split("\n\n");
+      const cues = [];
+      for (const block of blocks) {
+        const lines = block.split("\n");
+        if (lines.length < 3) continue;
+        const timeLine = lines[1];
+        const m = timeLine.match(/(\d+:\d+:\d+,\d+)\s*-->\s*(\d+:\d+:\d+,\d+)/);
+        if (!m) continue;
+        const start = toSeconds(m[1]);
+        const end   = toSeconds(m[2]);
+        const text  = lines.slice(2).join("\n").trim();
+        if (!text) continue;
+        cues.push({ start, end, text });
+      }
+      cues.sort((a, b) => a.start - b.start);
+      return cues;
+    }
+
+    const cues = parseSrt(srtText);
+    let lastIndex = -1;
+
+    audio.addEventListener("timeupdate", () => {
+      const t = audio.currentTime;
+      if (lastIndex >= 0) {
+        const c = cues[lastIndex];
+        if (t >= c.start && t <= c.end) return;
+      }
+      let found = -1;
+      for (let i = 0; i < cues.length; i++) {
+        if (t >= cues[i].start && t <= cues[i].end) { found = i; break; }
+      }
+      if (found !== lastIndex) {
+        lastIndex = found;
+        subtitleEl.textContent = (found === -1) ? "" : cues[found].text;
+      }
+    });
+
+    audio.addEventListener("seeked", () => { lastIndex = -1; });
+    audio.addEventListener("ended", () => { subtitleEl.textContent = ""; });
+
+    audio.addEventListener("error", () => {
+      errEl.style.display = "block";
+      errEl.textContent =
+        (errEl.textContent ? (errEl.textContent + "\n\n") : "") +
+        "音频加载失败：请检查 audio URL 是否可公开访问、是否过期。";
+    });
+  }
+
+  init();
+</script>
