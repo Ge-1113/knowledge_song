@@ -1,1 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>智能播放器</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 24px; background: #f4f7f6; color: #333; }
+    .box { max-width: 600px; margin: 40px auto; background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; }
+    #subtitle { margin: 20px 0; font-size: 24px; font-weight: bold; color: #2c3e50; min-height: 60px; line-height: 1.5; }
+    audio { width: 100%; border-radius: 10px; }
+    .status { font-size: 12px; color: #999; margin-top: 15px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div id="subtitle">正在加载音乐数据...</div>
+    <audio id="player" controls></audio>
+    <div class="status" id="status">连接中...</div>
+  </div>
 
+ <script>
+    const subtitleEl = document.getElementById("subtitle");
+    const audio = document.getElementById("player");
+
+    // 【核心修改】解析 URL 参数中的 song 文件路径
+    const urlParams = new URLSearchParams(window.location.search);
+    const songParam = urlParams.get('song'); 
+    
+    // 如果 URL 里有 song 参数就用参数里的文件，没有就默认读取最新的那个（可选）
+    const targetFile = songParam ? `./${songParam}` : './data/song_info.json';
+    
+    // 加上时间戳防止浏览器缓存
+    const DATA_URL = `${targetFile}?t=${new Date().getTime()}`;
+
+    async function init() {
+        try {
+            subtitleEl.textContent = "正在同步云端数据...";
+            const response = await fetch(DATA_URL);
+            if (!response.ok) throw new Error("歌曲文件不存在或尚未同步完成，请刷新重试");
+            
+            const data = await response.json();
+            audio.src = data.audio;
+            const cues = parseSrt(data.srt);
+            
+            // 绑定播放逻辑
+            setupSync(audio, cues);
+            subtitleEl.textContent = "数据加载成功，请点击播放";
+        } catch (err) {
+            subtitleEl.textContent = "加载失败：" + err.message;
+        }
+    }
+
+    // ... 保持之前的 parseSrt, toSeconds, setupSync 函数不变 ...
+
+    init();
+</script>
+</body>
+</html>
