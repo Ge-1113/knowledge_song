@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Audio + SRT Captions</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Arial; padding: 24px; }
+    .box { max-width: 720px; margin: 0 auto; }
+    #subtitle {
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: #f6f6f6;
+      font-size: 22px;
+      line-height: 1.4;
+      text-align: center;
+      min-height: 48px;
+      white-space: pre-wrap;
+    }
+    .hint { color:#666; font-size: 13px; margin-top: 10px; }
+    .err {
+      margin-top: 10px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: #fff3cd;
+      color: #664d03;
+      font-size: 13px;
+      line-height: 1.5;
+      display: none;
+      white-space: pre-wrap;
+    }
+    code { background:#f2f2f2; padding: 1px 4px; border-radius: 4px; }
+    .row { display:flex; gap:10px; margin-top:10px; }
+    input { flex:1; padding:10px 12px; border-radius:10px; border:1px solid #ddd; }
+    button { padding:10px 12px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <audio id="player" controls preload="metadata" style="width:100%"></audio>
+    <div id="subtitle"></div>
+    <div id="err" class="err"></div>
+
+    <div class="hint">
+      ✅ 推荐：<code>?id=xxxx</code>（从短链接服务拉取音频与字幕）<br/>
+      兼容：<code>?audio=音频URL&srt=SRT的base64url</code>（无参数则播放默认示例）
+    </div>
+
+    <div class="row">
+      <input id="shareLink" readonly value="" />
+      <button id="copyBtn">复制链接</button>
+    </div>
+  </div>
+
+  <script>
+    // ====== 配置：你的 Worker 基址（只改这一行就行） ======
+    const WORKER_BASE = "https://morning-salad-f5d5.gli-enactus.workers.dev";
+
+    // ====== 默认 demo ======
+    const demoAudioUrl = "https://lf-bot-studio-plugin-resource.coze.cn/obj/bot-studio-platform-plugin-tos/artist/image/94021ffdc3b74531aa9add55b56db03a.wav";
+    const demoSrtText  = `1
+00:00:00,611 --> 00:00:06,308
+[intro]
+
+2
+00:00:10,451 --> 00:00:11,495
+[verse]
+
+3
+00:00:11,495 --> 00:00:15,290
+记忆是张小小的网
+`;
+
+    // ====== DOM ======
+    const audio = document.getElementById("player");
+    const subtitleEl = document.getElementById("subtitle");
+    const errEl = document.getElementById("err");
+    const shareEl = document.getElementById("shareLink");
+    const copyBtn = document.getElementById("copyBtn");
+
+    function showErr(msg) {
+      errEl.style.display = "block";
+      errEl.textContent = msg;
+    }
+
+    function getParam(name) {
+      return new URL(location.href).searchParams.get(name);
+    }
+
+    // base64url -> utf8
+    function b64urlToText(b64url) {
+      const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+      const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+      const bin = atob(b64 + pad);
+      const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+      return new TextDecoder("utf-8").decode(bytes);
+    }
+
+    // ====== SRT 解析 ======
+    function toSeconds(t) { // "HH:MM:SS,mmm"
+      const [hms, ms] = t.split(",");
+      const [h, m, s] = hms.split(":").map(Number);
+      return h * 3600 + m * 60 + s + (Number(ms) || 0) / 1000;
+    }
+
+    function parseSrt(srt) {
+      const blocks = srt.replace(/\r/g, "").trim().split("\n\n");
+      const cues = [];
+      for (const block of blocks) {
+        const lines = block.split("\n");
+        if (lines.length < 3) continue;
+        const m = lines[1].match(/(\d+:\d+:\d+,\d+)\s*-->\s*(\d+:\d+:\d+,\d+)/);
+        if (!m) continue;
+        const start = toSeconds(m[1]);
+        const end   = toSeconds(m[2]);
+        const text  = lines.slice(2).join("\n").trim();
+        if (!text) continue;
+        cues.push({ start, end, text });
+      }
+      cues.sort((a, b) => a.start - b.start);
+      return cues;
+    }
+
+    // ====== 字幕同步 ======
+    function bindSubtitle(cues) {
+      let lastIndex = -1;
+
+      audio.addEventListener("timeupdate", () => {
+        const t = audio.currentTime;
+
+        if (lastIndex >= 0) {
+          const c = cues[lastIndex];
+          if (t >= c.start && t <= c.end) return;
+        }
+
+        let found = -1;
+        for (let i = 0; i < cues.length; i++) {
+          if (t >= cues[i].start && t <= cues[i].end) { found = i; break; }
+        }
+
+        if (found !== lastIndex) {
+          lastIndex = found;
+          subtitleEl.textContent = (found === -1) ? "" : cues[found].text;
+        }
+      });
+
+      audio.addEventListener("seeked", () => { lastIndex = -1; });
+      audio.addEventListener("ended", () => { subtitleEl.textContent = ""; });
+
+      audio.addEventListener("error", () => {
+        showErr("音频加载失败：请检查 audio URL 是否可公开访问、是否支持浏览器播放（mp3/wav等），以及资源是否过期。");
+      });
+    }
+
+    // ====== 从 Worker 拉取 id 对应的数据 ======
+    async function loadFromId(id) {
+      const url = `${WORKER_BASE}/api/get?id=${encodeURIComponent(id)}`;
+      const resp = await fetch(url, { method: "GET" });
+      if (!resp.ok) {
+        throw new Error(`GET ${url} 失败：HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+
+      // 兼容字段名：audioUrl / srtText
+      if (!data || !data.audioUrl || !data.srtText) {
+        throw new Error("接口返回缺少 audioUrl / srtText 字段。请检查 Worker /api/get 的返回 JSON。");
+      }
+      return data;
+    }
+
+    // ====== 主流程：优先 id，其次 audio&srt，最后 demo ======
+    (async function main() {
+      const id = getParam("id");
+      const audioParam = getParam("audio");
+      const srtParam   = getParam("srt");
+
+      let audioUrl = demoAudioUrl;
+      let srtText  = demoSrtText;
+
+      try {
+        if (id) {
+          const data = await loadFromId(id);
+          audioUrl = data.audioUrl;
+          srtText  = data.srtText;
+        } else {
+          // 兼容旧模式：audio + srt(base64url)
+          if (audioParam) {
+            // URLSearchParams 通常已解码，不强行 decodeURIComponent，避免二次解码报错
+            audioUrl = audioParam;
+          }
+          if (srtParam) {
+            srtText = b64urlToText(srtParam);
+          }
+        }
+      } catch (e) {
+        showErr(String(e) + "\n将回退到默认示例。");
+        audioUrl = demoAudioUrl;
+        srtText  = demoSrtText;
+      }
+
+      audio.src = audioUrl;
+      const cues = parseSrt(srtText);
+      bindSubtitle(cues);
+
+      // 显示可分享链接
+      shareEl.value = location.href;
+      copyBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(location.href);
+          copyBtn.textContent = "已复制";
+          setTimeout(() => copyBtn.textContent = "复制链接", 1000);
+        } catch {
+          showErr("复制失败：浏览器权限限制。你可以手动复制地址栏链接。");
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
