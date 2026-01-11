@@ -1,1 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>智能音乐播放器 - 视觉版</title>
+  <style>
+    /* 全屏背景及基础设置 */
+    body { 
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, sans-serif; 
+      height: 100vh;
+      display: flex; 
+      justify-content: center; 
+      align-items: center; 
+      background-color: #000;
+      background-repeat: no-repeat;
+      background-size: cover;
+      background-position: center;
+      transition: background-image 1s ease-in-out; /* 背景切换动画 */
+    }
 
+    /* 播放器容器：毛玻璃效果 */
+    .box { 
+      width: 90%; 
+      max-width: 500px; 
+      background: rgba(255, 255, 255, 0.15); /* 半透明 */
+      backdrop-filter: blur(20px); /* 磨砂玻璃核心代码 */
+      -webkit-backdrop-filter: blur(20px);
+      padding: 40px 30px; 
+      border-radius: 32px; 
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3); 
+      text-align: center;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    /* 字幕样式优化 */
+    #subtitle { 
+      margin: 40px 0; 
+      font-size: 26px; 
+      font-weight: 600; 
+      color: #fff; 
+      text-shadow: 0 2px 10px rgba(0,0,0,0.5); /* 文字阴影增强可读性 */
+      min-height: 100px; 
+      line-height: 1.5; 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      transition: all 0.3s ease;
+    }
+
+    /* 音频播放器样式 */
+    audio { 
+      width: 100%; 
+      height: 45px; 
+      border-radius: 12px; 
+      filter: invert(1) hue-rotate(180deg); /* 将默认播放器改为浅色调 */
+      opacity: 0.8;
+    }
+
+    /* 状态栏 */
+    .status { 
+      font-size: 11px; 
+      color: rgba(255, 255, 255, 0.5); 
+      margin-top: 25px; 
+      letter-spacing: 0.5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div id="subtitle">正在同步云端视觉数据...</div>
+    <audio id="player" controls></audio>
+    <div class="status" id="status">INITIALIZING...</div>
+  </div>
+
+  <script>
+    const subtitleEl = document.getElementById("subtitle");
+    const audio = document.getElementById("player");
+    const statusEl = document.getElementById("status");
+
+    // 1. 获取 URL 参数
+    const urlParams = new URLSearchParams(window.location.search);
+    const songParam = urlParams.get('song'); 
+    const targetFile = songParam ? `./${songParam}` : './data/song_info.json';
+    const DATA_URL = `${targetFile}?t=${new Date().getTime()}`;
+
+    // 2. 解析逻辑
+    function toSeconds(t) {
+      if (!t) return 0;
+      const [hms, ms] = t.split(",");
+      const [h, m, s] = hms.split(":").map(Number);
+      return h * 3600 + m * 60 + s + (Number(ms) || 0) / 1000;
+    }
+
+    function parseSrt(srt) {
+      if (!srt) return [];
+      const blocks = srt.replace(/\r/g, "").trim().split(/\n\s*\n/);
+      return blocks.map(block => {
+        const lines = block.split("\n");
+        if (lines.length < 3) return null;
+        const timeMatch = lines[1].match(/(\d+:\d+:\d+,\d+)\s*-->\s*(\d+:\d+:\d+,\d+)/);
+        if (!timeMatch) return null;
+        return {
+          start: toSeconds(timeMatch[1]),
+          end: toSeconds(timeMatch[2]),
+          text: lines.slice(2).join("\n").trim()
+        };
+      }).filter(Boolean);
+    }
+
+    // 3. 同步
+    function setupSync(player, cues) {
+      let lastIndex = -1;
+      player.addEventListener("timeupdate", () => {
+        const t = player.currentTime;
+        let found = cues.findIndex(c => t >= c.start && t <= c.end);
+        if (found !== lastIndex) {
+          lastIndex = found;
+          subtitleEl.style.opacity = 0; // 切换动画
+          setTimeout(() => {
+            subtitleEl.textContent = (found === -1) ? "" : cues[found].text;
+            subtitleEl.style.opacity = 1;
+          }, 150);
+        }
+      });
+      player.addEventListener("seeked", () => { lastIndex = -1; });
+    }
+
+    // 4. 加载图片背景与数据
+    async function init() {
+      try {
+        const response = await fetch(DATA_URL);
+        if (!response.ok) throw new Error("同步中，请刷新...");
+        
+        const data = await response.json();
+        
+        // 【核心：设置背景图】
+        if (data.image) {
+          document.body.style.backgroundImage = `url('${data.image}')`;
+        } else {
+          // 如果没有背景图，给个默认渐变
+          document.body.style.background = "linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)";
+        }
+
+        audio.src = data.audio;
+        const cues = parseSrt(data.srt || "");
+        setupSync(audio, cues);
+        
+        subtitleEl.textContent = "准备就绪";
+        statusEl.textContent = "SOURCE: " + (songParam ? "DYNAMIC ARCHIVE" : "LATEST");
+        
+      } catch (err) {
+        subtitleEl.textContent = "LOAD ERROR";
+        statusEl.textContent = err.message;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
