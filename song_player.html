@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Audio + SRT Captions</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Arial; padding: 24px; }
+    .box { max-width: 720px; margin: 0 auto; }
+    #subtitle {
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: #f6f6f6;
+      font-size: 22px;
+      line-height: 1.4;
+      text-align: center;
+      min-height: 48px;
+      white-space: pre-wrap;
+    }
+    .hint { color:#666; font-size: 13px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <audio id="player" controls preload="metadata" style="width:100%"></audio>
+    <div id="subtitle"></div>
+    <div class="hint">字幕来自智能体输出的 SRT 字符串；无需生成字幕文件。</div>
+  </div>
+
+  <script>
+    // ====== 1) 替换成你的数据 ======
+    const audioUrl = "https://lf-bot-studio-plugin-resource.coze.cn/obj/bot-studio-platform-plugin-tos/artist/image/94021ffdc3b74531aa9add55b56db03a.wav"; // 你的音频URL
+    const srtText  = `1\n00:00:00,611 --> 00:00:06,308\n[intro]\n\n2\n00:00:10,451 --> 00:00:11,495\n[verse]\n\n3\n00:00:11,495 --> 00:00:15,290\n记忆是张小小的网\n\n4\n00:00:15,291 --> 00:00:18,970\n存着过去的模样\n\n5\n00:00:18,971 --> 00:00:25,530\n三个开关开启它的功能\n\n6\n00:00:25,531 --> 00:00:30,124\n分别叫做忘记存储和取用\n\n7\n00:00:30,124 --> 00:00:32,130\n[chorus]\n\n8\n00:00:32,131 --> 00:00:37,050\n猜字翻译让你不再迷茫\n\n9\n00:00:37,051 --> 00:00:42,108\n文字转换帮你轻松远航\n\n10\n00:00:42,691 --> 00:00:47,610\n记得牢固搭配实用\n\n11\n00:00:47,611 --> 00:00:53,210\n记忆助手聪明地把事情办\n\n12\n00:00:53,211 --> 00:00:57,490\n[verse]\n\n13\n00:00:57,491 --> 00:01:01,170\n记忆是张小小的网\n\n14\n00:01:01,171 --> 00:01:05,450\n存着过去的模样\n\n15\n00:01:05,451 --> 00:01:10,080\n三个开关开启它的功能\n\n16\n00:01:10,080 --> 00:01:14,708\n分别叫做忘记存储和取用\n\n17\n00:01:14,708 --> 00:01:15,610\n[chorus]\n\n18\n00:01:15,611 --> 00:01:20,570\n猜字翻译让你不再迷茫\n\n19\n00:01:20,571 --> 00:01:25,588\n文字转换帮你轻松远航\n\n20\n00:01:26,171 --> 00:01:31,090\n记得牢固搭配实用\n\n21\n00:01:31,091 --> 00:01:37,730\n记忆助手巧妙地把事情办\n\n22\n00:01:37,731 --> 00:01:52,348\n[outro]\n`;
+
+    // ====== 2) 装载音频 ======
+    const audio = document.getElementById("player");
+    const subtitleEl = document.getElementById("subtitle");
+    audio.src = audioUrl;
+
+    // ====== 3) SRT 解析 ======
+    function toSeconds(t) { // "HH:MM:SS,mmm"
+      const [hms, ms] = t.split(",");
+      const [h, m, s] = hms.split(":").map(Number);
+      return h * 3600 + m * 60 + s + (Number(ms) || 0) / 1000;
+    }
+
+    function parseSrt(srt) {
+      const blocks = srt.replace(/\r/g, "").trim().split("\n\n");
+      const cues = [];
+
+      for (const block of blocks) {
+        const lines = block.split("\n");
+        if (lines.length < 3) continue;
+
+        const timeLine = lines[1];
+        const m = timeLine.match(/(\d+:\d+:\d+,\d+)\s*-->\s*(\d+:\d+:\d+,\d+)/);
+        if (!m) continue;
+
+        const start = toSeconds(m[1]);
+        const end   = toSeconds(m[2]);
+        const text  = lines.slice(2).join("\n").trim();
+        if (!text) continue;
+
+        cues.push({ start, end, text });
+      }
+
+      cues.sort((a, b) => a.start - b.start);
+      return cues;
+    }
+
+    const cues = parseSrt(srtText);
+
+    // ====== 4) 同步渲染字幕 ======
+    let lastIndex = -1;
+
+    audio.addEventListener("timeupdate", () => {
+      const t = audio.currentTime;
+
+      // 若还在同一条字幕里，不用重复查找
+      if (lastIndex >= 0) {
+        const c = cues[lastIndex];
+        if (t >= c.start && t <= c.end) return;
+      }
+
+      // 查找当前应显示的字幕
+      let found = -1;
+      for (let i = 0; i < cues.length; i++) {
+        if (t >= cues[i].start && t <= cues[i].end) { found = i; break; }
+      }
+
+      if (found !== lastIndex) {
+        lastIndex = found;
+        subtitleEl.textContent = (found === -1) ? "" : cues[found].text;
+      }
+    });
+
+    audio.addEventListener("seeked", () => { lastIndex = -1; }); // 拖动进度条后强制重算
+    audio.addEventListener("ended", () => { subtitleEl.textContent = ""; });
+  </script>
+</body>
+</html>
