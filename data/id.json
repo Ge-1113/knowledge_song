@@ -1,1 +1,4 @@
-
+{
+  "audioUrl": "https://....wav",
+  "srtText": "1\n00:00:00,000 --> 00:00:02,000\nhello"
+}
